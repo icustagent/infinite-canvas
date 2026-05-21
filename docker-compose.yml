@@ -1,5 +1,5 @@
 services:
-  infinite-canvas:
+  app:
     build:
       context: .
       dockerfile: Dockerfile
@@ -23,7 +23,7 @@ services:
           memory: 1G
     networks:
       - infinite-canvas
-      - apinetwork
+      # - apinetwork
 
   db:
     image: postgres:16-alpine
@@ -49,5 +49,5 @@ services:
 networks:
   infinite-canvas:
     name: infinite-canvas
-  apinetwork:
-    name: apinetwork
+  # apinetwork:
+  #   name: apinetwork
