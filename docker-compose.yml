@@ -1,14 +1,19 @@
 services:
   app:
-    image: ghcr.io/basketikun/infinite-canvas:latest
-    container_name: infinite-canvas
-    restart: unless-stopped
+    image: infinite-canvas:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # image: ghcr.io/basketikun/infinite-canvas:latest
     env_file:
       - .env
     volumes:
       - ./data:/app/data
     ports:
       - "3223:3000"
+    depends_on:
+      db:
+        condition: service_healthy
     deploy:
       resources:
         limits:
