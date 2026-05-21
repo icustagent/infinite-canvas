@@ -1,7 +1,7 @@
 services:
   app:
     image: ghcr.io/basketikun/infinite-canvas:latest
-    container_name: infinitecanvas
+    container_name: infinite-canvas
     restart: unless-stopped
     env_file:
       - .env
@@ -15,12 +15,12 @@ services:
           cpus: "1.00"
           memory: 1G
     networks:
-      - infinitecanvas
+      - infinite-canvas
       - apinetwork
 
   db:
     image: postgres:16-alpine
-    container_name: infinitecanvas-postgres
+    container_name: infinite-canvas-postgres
     restart: unless-stopped
     env_file:
       - .env
@@ -37,10 +37,10 @@ services:
           cpus: "0.5"
           memory: 500m
     networks:
-      - infinitecanvas
+      - infinite-canvas
 
 networks:
-  infinitecanvas:
-    name: infinitecanvas
+  infinite-canvas:
+    name: infinite-canvas
   apinetwork:
     name: apinetwork
