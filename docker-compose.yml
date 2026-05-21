@@ -1,7 +1,7 @@
 services:
   app:
     image: ghcr.io/basketikun/infinite-canvas:latest
-    container_name: infinite-canvas
+    container_name: infinitecanvas
     restart: unless-stopped
     env_file:
       - .env
