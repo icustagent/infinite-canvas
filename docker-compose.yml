@@ -2,10 +2,45 @@ services:
   app:
     image: ghcr.io/basketikun/infinite-canvas:latest
     container_name: infinite-canvas
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
       - ./data:/app/data
     ports:
-      - "3000:3000"
+      - "3223:3000"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1G
+    networks:
+      - infinitecanvas
+      - apinetwork
+
+  db:
+    image: postgres:16-alpine
+    container_name: infinitecanvas-postgres
     restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 500m
+    networks:
+      - infinitecanvas
+
+networks:
+  infinitecanvas:
+    name: infinitecanvas
+  apinetwork:
+    name: apinetwork
