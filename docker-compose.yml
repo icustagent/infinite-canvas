@@ -1,10 +1,12 @@
 services:
   app:
-    image: infinite-canvas:local
     build:
       context: .
       dockerfile: Dockerfile
+    image: infinite-canvas:local
+    container_name: infinite-canvas-local
     # image: ghcr.io/basketikun/infinite-canvas:latest
+    # container_name: infinite-canvas
     env_file:
       - .env
     volumes:
