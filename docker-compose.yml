@@ -1,5 +1,5 @@
 services:
-  infinite-canvas:
+  app:
     build:
       context: .
       dockerfile: Dockerfile
