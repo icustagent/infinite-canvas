@@ -26,6 +26,7 @@ type PublicModelChannelSetting struct {
 	AvailableModels    []string `json:"availableModels"`
 	DefaultModel       string   `json:"defaultModel"`
 	DefaultImageModel  string   `json:"defaultImageModel"`
+	DefaultVideoModel  string   `json:"defaultVideoModel"`
 	DefaultTextModel   string   `json:"defaultTextModel"`
 	SystemPrompt       string   `json:"systemPrompt"`
 	AllowCustomChannel *bool    `json:"allowCustomChannel"`
@@ -44,7 +45,7 @@ type PrivateSetting struct {
 
 // PromptSyncSetting 提示词定时同步配置。
 type PromptSyncSetting struct {
-	Enabled bool   `json:"enabled"`
+	Enabled *bool  `json:"enabled"`
 	Cron    string `json:"cron"`
 }
 

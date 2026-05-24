@@ -120,6 +120,7 @@
 | `availableModels` | string[] | 系统可用模型列表       |
 | `defaultModel`    | string   | 默认模型           |
 | `defaultImageModel` | string | 默认图片模型         |
+| `defaultVideoModel` | string | 默认视频模型         |
 | `defaultTextModel` | string  | 默认文本模型         |
 | `systemPrompt`    | string   | 系统提示词          |
 | `allowCustomChannel` | bool    | 是否允许用户自定义渠道，默认允许，关闭后前端只提供走后端渠道的模式 |
@@ -148,8 +149,8 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `enabled` | bool | 是否开启定时同步 |
-| `cron` | string | Cron 表达式，默认每天 03:00 |
+| `enabled` | bool | 是否开启定时同步，默认开启 |
+| `cron` | string | Cron 表达式，默认每 5 分钟 |
 
 后端请求模型时，先按模型名筛选启用且包含该模型的渠道，再按 `weight` 加权随机选择一个渠道。
 
