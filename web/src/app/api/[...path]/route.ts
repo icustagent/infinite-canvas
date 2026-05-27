@@ -12,6 +12,8 @@ function proxyHeaders(request: NextRequest) {
     headers.delete("host");
     headers.delete("content-length");
     headers.delete("connection");
+    headers.set("x-forwarded-host", request.nextUrl.host);
+    headers.set("x-forwarded-proto", request.nextUrl.protocol.replace(":", ""));
     return headers;
 }
 
@@ -35,6 +37,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
             headers: proxyHeaders(request),
             body: hasBody ? request.body : undefined,
             duplex: hasBody ? "half" : undefined,
+            redirect: "manual",
         } as RequestInit & { duplex?: "half" });
 
         return new Response(response.body, {

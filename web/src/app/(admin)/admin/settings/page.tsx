@@ -2,12 +2,12 @@
 
 import { CheckCircleOutlined, DeleteOutlined, FormatPainterOutlined, LoadingOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons";
 import { json } from "@codemirror/lang-json";
-import { Alert, App, Button, Card, Col, Drawer, Flex, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography } from "antd";
+import { App, Button, Card, Checkbox, Col, Drawer, Flex, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography } from "antd";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { EditorView } from "@uiw/react-codemirror";
 
-import { fetchAdminSettings, fetchChannelModels, saveAdminSettings, testChannelModel, type AdminModelChannel, type AdminSettings } from "@/services/api/admin";
+import { fetchAdminSettings, fetchChannelModels, saveAdminSettings, testChannelModel, type AdminModelChannel, type AdminModelCost, type AdminSettings } from "@/services/api/admin";
 import { useUserStore } from "@/stores/use-user-store";
 
 const CodeMirror = dynamic(() => import("@uiw/react-codemirror"), { ssr: false });
@@ -28,6 +28,7 @@ const emptySettings: AdminSettings = {
     public: {
         modelChannel: {
             availableModels: [],
+            modelCosts: [],
             defaultModel: "",
             defaultImageModel: "",
             defaultVideoModel: "",
@@ -35,13 +36,15 @@ const emptySettings: AdminSettings = {
             systemPrompt: "",
             allowCustomChannel: true,
         },
+        auth: { allowRegister: true, linuxDo: { enabled: false } },
     },
-    private: { channels: [], promptSync: { enabled: true, cron: "*/5 * * * *" } },
+    private: { channels: [], promptSync: { enabled: true, cron: "*/5 * * * *" }, auth: { linuxDo: { clientId: "", clientSecret: "" } } },
 };
 const emptyChannel: AdminModelChannel = { protocol: "openai", name: "", baseUrl: "", apiKey: "", models: [], weight: 1, enabled: true, remark: "" };
 
 type SettingsTabKey = "public" | "private";
 type EditorMode = "visual" | "json";
+type ModelSelectTabKey = "new" | "current";
 
 export default function AdminSettingsPage() {
     const token = useUserStore((state) => state.token);
@@ -59,15 +62,30 @@ export default function AdminSettingsPage() {
     const [selectedTestModels, setSelectedTestModels] = useState<string[]>([]);
     const [testingModels, setTestingModels] = useState<string[]>([]);
     const [testResults, setTestResults] = useState<Record<string, { status: "success" | "error"; duration?: string; message: string }>>({});
+    const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
+    const [modelSelectSource, setModelSelectSource] = useState<string[]>([]);
+    const [modelSelectExisting, setModelSelectExisting] = useState<string[]>([]);
+    const [modelSelectSelected, setModelSelectSelected] = useState<string[]>([]);
+    const [modelSelectKeyword, setModelSelectKeyword] = useState("");
+    const [modelSelectNewModel, setModelSelectNewModel] = useState("");
+    const [modelSelectTab, setModelSelectTab] = useState<ModelSelectTabKey>("new");
+    const [isFetchingChannelModels, setIsFetchingChannelModels] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    const [modelCosts, setModelCosts] = useState<AdminModelCost[]>([]);
+    const [knownModels, setKnownModels] = useState<string[]>([]);
     const publicModels = Form.useWatch(["public", "modelChannel", "availableModels"], form) || [];
     const channelModels = useMemo(() => collectChannelModels(channels), [channels]);
     const channelTableData = useMemo(() => channels.map((channel, index) => ({ ...channel, _index: index, _rowKey: `${index}-${channel.name}-${channel.baseUrl}` })), [channels]);
-    const modelOptions = useMemo(() => uniqueModels([...publicModels, ...channelModels]), [publicModels, channelModels]);
     const activeMode = editorMode[activeTab];
     const activeJsonText = jsonText[activeTab];
     const jsonError = activeMode === "json" ? getJsonError(activeJsonText) : "";
+    const modelSelectGroups = useMemo(() => buildModelSelectGroups(modelSelectSource, modelSelectExisting), [modelSelectSource, modelSelectExisting]);
+    const activeModelSelectModels = useMemo(() => {
+        const keyword = modelSelectKeyword.trim().toLowerCase();
+        return modelSelectGroups[modelSelectTab].filter((model) => model.toLowerCase().includes(keyword));
+    }, [modelSelectGroups, modelSelectKeyword, modelSelectTab]);
+    const activeSelectedCount = activeModelSelectModels.filter((model) => modelSelectSelected.includes(model)).length;
 
     const loadSettings = async () => {
         if (!token) return;
@@ -76,6 +94,8 @@ export default function AdminSettingsPage() {
             const data = normalizeSettings(await fetchAdminSettings(token));
             form.setFieldsValue(data);
             setChannels(data.private.channels);
+            setModelCosts(data.public.modelChannel.modelCosts);
+            setKnownModels(collectKnownModels(data));
             setJsonText({
                 public: JSON.stringify(data.public, null, 2),
                 private: JSON.stringify(data.private, null, 2),
@@ -107,6 +127,8 @@ export default function AdminSettingsPage() {
             const merged = mergeChannelApiKeys(values.private.channels, saved);
             form.setFieldsValue(merged);
             setChannels(merged.private.channels);
+            setModelCosts(merged.public.modelChannel.modelCosts);
+            rememberKnownModels(merged);
             setJsonText({
                 public: JSON.stringify(merged.public, null, 2),
                 private: JSON.stringify(merged.private, null, 2),
@@ -135,6 +157,8 @@ export default function AdminSettingsPage() {
         }
         form.setFieldsValue({ [tab]: parsed } as Partial<AdminSettings>);
         if (tab === "private") setChannels((parsed as AdminSettings["private"]).channels);
+        if (tab === "public") setModelCosts((parsed as AdminSettings["public"]).modelChannel.modelCosts);
+        rememberKnownModels({ ...normalizeSettings(form.getFieldsValue(true) as AdminSettings), [tab]: parsed });
         setEditorMode((current) => ({ ...current, [tab]: nextMode }));
     };
 
@@ -144,6 +168,7 @@ export default function AdminSettingsPage() {
             message.error("JSON 格式不正确");
             return;
         }
+        if (tab === "public") setModelCosts((parsed as AdminSettings["public"]).modelChannel.modelCosts);
         setJsonText((current) => ({
             ...current,
             [tab]: JSON.stringify(parsed, null, 2),
@@ -153,7 +178,9 @@ export default function AdminSettingsPage() {
     const openChannelDrawer = (index: number | null) => {
         setEditingChannelIndex(index);
         setIsChannelDrawerOpen(true);
-        channelForm.setFieldsValue(index === null ? emptyChannel : normalizeChannel(channels[index]));
+        const channel = index === null ? emptyChannel : normalizeChannel(channels[index]);
+        channelForm.setFieldsValue(channel);
+        rememberModels(channel.models);
     };
 
     const closeChannelDrawer = () => {
@@ -164,6 +191,7 @@ export default function AdminSettingsPage() {
 
     const saveChannel = async () => {
         const channel = normalizeChannel(await channelForm.validateFields());
+        rememberModels(channel.models);
         const nextChannels = [...channels];
         if (editingChannelIndex === null) nextChannels.push(channel);
         else nextChannels[editingChannelIndex] = channel;
@@ -182,14 +210,80 @@ export default function AdminSettingsPage() {
             message.warning("请先填写 API Key");
             return;
         }
+        setIsFetchingChannelModels(true);
         try {
             const channelModels = await fetchChannelModels(token, { index: editingChannelIndex ?? undefined, channel: normalizeChannel(channel) });
-            channelForm.setFieldValue("models", channelModels);
-            message.success(`已获取 ${channelModels.length} 个模型`);
+            const current = isModelSelectorOpen ? uniqueModels(modelSelectSelected) : uniqueModels(channelForm.getFieldValue("models") || []);
+            rememberModels(channelModels);
+            setModelSelectExisting(current);
+            setModelSelectSource(uniqueModels(channelModels));
+            setModelSelectSelected(uniqueModels([...current, ...channelModels]));
+            setModelSelectKeyword("");
+            setModelSelectNewModel("");
+            setModelSelectTab("new");
+            setIsModelSelectorOpen(true);
+            message.success(`已获取 ${channelModels.length} 个模型，请选择后确认`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "读取模型失败");
+        } finally {
+            setIsFetchingChannelModels(false);
         }
     };
+
+    const openChannelModelSelector = (sourceModels?: string[]) => {
+        const current = uniqueModels(channelForm.getFieldValue("models") || []);
+        const source = uniqueModels(sourceModels !== undefined ? sourceModels : [...knownModels, ...current]);
+        setModelSelectExisting(current);
+        setModelSelectSource(source);
+        setModelSelectSelected(sourceModels ? uniqueModels([...current, ...source]) : current);
+        setModelSelectKeyword("");
+        setModelSelectNewModel("");
+        setModelSelectTab(sourceModels ? "new" : "current");
+        setIsModelSelectorOpen(true);
+    };
+
+    const closeChannelModelSelector = () => {
+        setIsModelSelectorOpen(false);
+        setModelSelectKeyword("");
+        setModelSelectNewModel("");
+    };
+
+    const confirmChannelModelSelector = () => {
+        const models = uniqueModels(modelSelectSelected);
+        channelForm.setFieldValue("models", models);
+        rememberModels(models);
+        closeChannelModelSelector();
+    };
+
+    const toggleSelectedModel = (model: string, checked: boolean) => {
+        setModelSelectSelected((current) => (checked ? uniqueModels([...current, model]) : current.filter((item) => item !== model)));
+    };
+
+    const selectActiveModels = () => {
+        setModelSelectSelected((current) => uniqueModels([...current, ...activeModelSelectModels]));
+    };
+
+    const clearActiveModels = () => {
+        const active = new Set(activeModelSelectModels);
+        setModelSelectSelected((current) => current.filter((model) => !active.has(model)));
+    };
+
+    const addModelInSelector = () => {
+        const model = modelSelectNewModel.trim();
+        if (!model) return;
+        setModelSelectExisting((current) => uniqueModels([...current, model]));
+        setModelSelectSelected((current) => uniqueModels([...current, model]));
+        setModelSelectNewModel("");
+        setModelSelectTab("current");
+    };
+
+    function rememberModels(models: string[]) {
+        setKnownModels((current) => uniqueModels([...current, ...models]));
+    }
+
+    function rememberKnownModels(settings: AdminSettings) {
+        rememberModels(collectKnownModels(settings));
+    }
 
     const openTestDialog = (index: number) => {
         const channel = normalizeChannel(channels[index]);
@@ -240,13 +334,17 @@ export default function AdminSettingsPage() {
     async function persistChannels(nextChannels: AdminModelChannel[]) {
         if (!token) return;
         const values = normalizeSettings(form.getFieldsValue(true) as AdminSettings);
+        const nextChannelModels = collectChannelModels(nextChannels);
         const nextSettings = normalizeSettings({
             ...values,
+            public: { ...values.public, modelChannel: { ...values.public.modelChannel, availableModels: filterModels(values.public.modelChannel.availableModels, nextChannelModels) } },
             private: { ...values.private, channels: nextChannels },
         });
         const saved = normalizeSettings(await saveAdminSettings(token, nextSettings));
         const merged = mergeChannelApiKeys(nextChannels, saved);
         setChannels(merged.private.channels);
+        setModelCosts(merged.public.modelChannel.modelCosts);
+        rememberKnownModels(merged);
         form.setFieldsValue(merged);
         setJsonText({
             public: JSON.stringify(merged.public, null, 2),
@@ -312,8 +410,8 @@ export default function AdminSettingsPage() {
                             <Form form={form} layout="vertical" initialValues={emptySettings} requiredMark={false}>
                                 <Row gutter={16}>
                                     <Col span={24}>
-                                        <Form.Item name={["public", "modelChannel", "availableModels"]} label="系统可用模型(请先配置渠道)">
-                                            <Select mode="tags" tokenSeparators={[",", "\n"]} options={modelOptions.map((item) => ({ label: item, value: item }))} />
+                                        <Form.Item name={["public", "modelChannel", "availableModels"]} label="系统可用模型(请先在私有配置里配置渠道)" extra="可选项来自已启用渠道中选择的模型，最终开放哪些模型由这里勾选决定">
+                                            <Select mode="multiple" placeholder="请选择系统可用模型" options={channelModels.map((item) => ({ label: item, value: item }))} />
                                         </Form.Item>
                                     </Col>
                                     <Col xs={24} md={6}>
@@ -346,6 +444,39 @@ export default function AdminSettingsPage() {
                                             <Switch />
                                         </Form.Item>
                                     </Col>
+                                    <Col span={24}>
+                                        <Form.Item name={["public", "auth", "allowRegister"]} label="是否允许用户注册" extra="关闭后隐藏注册入口，注册接口也会拒绝新用户创建" valuePropName="checked">
+                                            <Switch />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={24}>
+                                        <Typography.Title level={5}>模型算力点</Typography.Title>
+                                        <Table
+                                            rowKey="model"
+                                            pagination={false}
+                                            size="small"
+                                            dataSource={publicModels.map((model) => ({ model, credits: modelCostCredits(modelCosts, model) }))}
+                                            columns={[
+                                                { title: "模型", dataIndex: "model" },
+                                                {
+                                                    title: "每次调用扣除",
+                                                    dataIndex: "credits",
+                                                    width: 220,
+                                                    render: (_, item) => (
+                                                        <InputNumber
+                                                            min={0}
+                                                            step={1}
+                                                            precision={0}
+                                                            className="!w-full"
+                                                            value={item.credits}
+                                                            addonAfter="点"
+                                                            onChange={(value) => setModelCost(form, setModelCosts, item.model, Number(value) || 0)}
+                                                        />
+                                                    ),
+                                                },
+                                            ]}
+                                        />
+                                    </Col>
                                 </Row>
                             </Form>
                         ) : (
@@ -364,7 +495,41 @@ export default function AdminSettingsPage() {
                     ) : activeMode === "visual" ? (
                         <Form form={form} layout="vertical" initialValues={emptySettings} requiredMark={false}>
                             <Flex vertical gap={12}>
-                                <Alert showIcon type="warning" title="当前还没有完整用户体系，所有访问到站点的用户都可以无条件使用后端渠道 API。请不要公网部署，避免私有渠道额度被他人消耗。" />
+                                <Card
+                                    size="small"
+                                    title={
+                                        <Space>
+                                            <img src="/icons/linuxdo.svg" alt="" width={18} height={18} />
+                                            Linux.do 登录
+                                        </Space>
+                                    }
+                                >
+                                    <Flex vertical gap={14}>
+                                        <Typography.Text type="secondary">
+                                            本项目接口回调地址是 /api/auth/linux-do/callback，请在 Linux.do 应用后台自行拼接站点前缀。
+                                            <Typography.Link href="https://connect.linux.do" target="_blank" rel="noreferrer">
+                                                点击此处管理你的 LinuxDO OAuth App
+                                            </Typography.Link>
+                                        </Typography.Text>
+                                        <Row gutter={16}>
+                                            <Col xs={24} md={6}>
+                                                <Form.Item name={["public", "auth", "linuxDo", "enabled"]} label="开启 Linux.do 登录" valuePropName="checked">
+                                                    <Switch />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col xs={24} md={9}>
+                                                <Form.Item name={["private", "auth", "linuxDo", "clientId"]} label="Linux.do Client ID">
+                                                    <Input placeholder="输入 Linux.do OAuth App 的 ID" />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col xs={24} md={9}>
+                                                <Form.Item name={["private", "auth", "linuxDo", "clientSecret"]} label="Linux.do Client Secret">
+                                                    <Input.Password placeholder="留空则沿用已保存的密钥" />
+                                                </Form.Item>
+                                            </Col>
+                                        </Row>
+                                    </Flex>
+                                </Card>
                                 <Card size="small" title="提示词定时同步">
                                     <Row gutter={16} align="middle">
                                         <Col xs={24} md={8}>
@@ -487,19 +652,17 @@ export default function AdminSettingsPage() {
                                 </Form.Item>
                             </Col>
                             <Col span={24}>
-                                <Form.Item name="apiKey" label="API Key" rules={[{ required: true, message: "请输入 API Key" }]}>
-                                    <Input.Password />
+                                <Form.Item name="apiKey" label="API Key" rules={editingChannelIndex === null ? [{ required: true, message: "请输入 API Key" }] : []}>
+                                    <Input.Password placeholder={editingChannelIndex === null ? "" : "留空则沿用已保存的 API Key"} />
                                 </Form.Item>
                             </Col>
                             <Col span={24}>
                                 <Form.Item label="渠道可用模型">
                                     <Space.Compact style={{ width: "100%" }}>
                                         <Form.Item name="models" noStyle>
-                                            <Select mode="tags" tokenSeparators={[",", "\n"]} />
+                                            <Select mode="tags" maxTagCount="responsive" tokenSeparators={[",", "\n"]} options={knownModels.map((model) => ({ label: model, value: model }))} />
                                         </Form.Item>
-                                        <Button icon={<ReloadOutlined />} onClick={() => void fetchChannelModelList()}>
-                                            获取模型列表
-                                        </Button>
+                                        <Button onClick={() => openChannelModelSelector()}>选择模型</Button>
                                     </Space.Compact>
                                 </Form.Item>
                             </Col>
@@ -511,6 +674,77 @@ export default function AdminSettingsPage() {
                         </Row>
                     </Form>
                 </Drawer>
+                <Modal
+                    title={
+                        <Space size={12}>
+                            选择渠道模型
+                            <Typography.Text type="secondary">
+                                已选择 {modelSelectSelected.length} / {uniqueModels([...modelSelectSource, ...modelSelectExisting]).length}
+                            </Typography.Text>
+                        </Space>
+                    }
+                    open={isModelSelectorOpen}
+                    width={960}
+                    onCancel={closeChannelModelSelector}
+                    footer={
+                        <Space>
+                            <Button onClick={closeChannelModelSelector}>取消</Button>
+                            <Button type="primary" onClick={confirmChannelModelSelector}>
+                                确定
+                            </Button>
+                        </Space>
+                    }
+                    destroyOnHidden
+                >
+                    <Flex vertical gap={14}>
+                        <Flex gap={12} wrap>
+                            <Input.Search placeholder="搜索模型" allowClear value={modelSelectKeyword} onChange={(event) => setModelSelectKeyword(event.target.value)} style={{ flex: "1 1 260px" }} />
+                            <Space.Compact style={{ flex: "1 1 320px" }}>
+                                <Input value={modelSelectNewModel} placeholder="输入模型名称" onChange={(event) => setModelSelectNewModel(event.target.value)} onPressEnter={addModelInSelector} />
+                                <Button onClick={addModelInSelector}>增加模型</Button>
+                                <Button icon={<ReloadOutlined />} loading={isFetchingChannelModels} onClick={() => void fetchChannelModelList()}>
+                                    拉取模型列表
+                                </Button>
+                            </Space.Compact>
+                        </Flex>
+                        <Tabs
+                            activeKey={modelSelectTab}
+                            onChange={(key) => setModelSelectTab(key as ModelSelectTabKey)}
+                            items={[
+                                { key: "new", label: `新获取的模型 (${modelSelectGroups.new.length})` },
+                                { key: "current", label: `已有的模型 (${modelSelectGroups.current.length})` },
+                            ]}
+                        />
+                        <Flex justify="space-between" align="center" gap={12} wrap>
+                            <Typography.Text type="secondary">
+                                当前列表已选择 {activeSelectedCount} / {activeModelSelectModels.length}
+                            </Typography.Text>
+                            <Space size={8}>
+                                <Button size="small" disabled={!activeModelSelectModels.length || activeSelectedCount === activeModelSelectModels.length} onClick={selectActiveModels}>
+                                    全选当前列表
+                                </Button>
+                                <Button size="small" disabled={!activeSelectedCount} onClick={clearActiveModels}>
+                                    取消当前列表
+                                </Button>
+                            </Space>
+                        </Flex>
+                        <div style={{ maxHeight: 420, overflowY: "auto", borderTop: "1px solid var(--ant-color-border-secondary)", paddingTop: 12 }}>
+                            {activeModelSelectModels.length ? (
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", columnGap: 24, rowGap: 12 }}>
+                                    {activeModelSelectModels.map((model) => (
+                                        <Checkbox key={model} checked={modelSelectSelected.includes(model)} onChange={(event) => toggleSelectedModel(model, event.target.checked)}>
+                                            <Typography.Text style={{ wordBreak: "break-all" }}>{model}</Typography.Text>
+                                        </Checkbox>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div style={{ padding: "48px 0", textAlign: "center" }}>
+                                    <Typography.Text type="secondary">没有匹配的模型</Typography.Text>
+                                </div>
+                            )}
+                        </div>
+                    </Flex>
+                </Modal>
                 <Modal
                     title={
                         <Space>
@@ -599,8 +833,19 @@ function normalizePublicSetting(setting: Partial<AdminSettings["public"]> = {}):
             ...emptySettings.public.modelChannel,
             ...(setting.modelChannel || {}),
             availableModels: setting.modelChannel?.availableModels || [],
+            modelCosts: normalizeModelCosts(setting.modelChannel?.modelCosts || []),
+        },
+        auth: {
+            allowRegister: setting.auth?.allowRegister !== false,
+            linuxDo: {
+                enabled: setting.auth?.linuxDo?.enabled === true,
+            },
         },
     };
+}
+
+function normalizeModelCosts(items: Partial<AdminSettings["public"]["modelChannel"]["modelCosts"][number]>[]) {
+    return items.filter((item) => item.model).map((item) => ({ model: item.model || "", credits: Math.max(0, Number(item.credits) || 0) }));
 }
 
 function normalizePrivateSetting(setting: Partial<AdminSettings["private"]> = {}): AdminSettings["private"] {
@@ -609,6 +854,12 @@ function normalizePrivateSetting(setting: Partial<AdminSettings["private"]> = {}
         promptSync: {
             enabled: setting.promptSync?.enabled !== false,
             cron: setting.promptSync?.cron || "*/5 * * * *",
+        },
+        auth: {
+            linuxDo: {
+                clientId: setting.auth?.linuxDo?.clientId || "",
+                clientSecret: setting.auth?.linuxDo?.clientSecret || "",
+            },
         },
     };
 }
@@ -626,6 +877,18 @@ function normalizeChannel(item: Partial<AdminModelChannel> = {}): AdminModelChan
     };
 }
 
+function modelCostCredits(items: AdminSettings["public"]["modelChannel"]["modelCosts"], model: string) {
+    return items.find((item) => item.model === model)?.credits || 0;
+}
+
+function setModelCost(form: any, setModelCosts: (items: AdminModelCost[]) => void, model: string, credits: number) {
+    const current = (form.getFieldValue(["public", "modelChannel", "modelCosts"]) || []) as AdminSettings["public"]["modelChannel"]["modelCosts"];
+    const next = current.filter((item) => item.model !== model);
+    next.push({ model, credits: Math.max(0, credits) });
+    form.setFieldValue(["public", "modelChannel", "modelCosts"], next);
+    setModelCosts(next);
+}
+
 function mergeChannelApiKeys(currentChannels: AdminModelChannel[], saved: AdminSettings): AdminSettings {
     const channels = saved.private.channels.map((item, index) => ({
         ...item,
@@ -641,8 +904,31 @@ function collectChannelModels(channels: AdminModelChannel[]) {
     return uniqueModels(channels.filter((channel) => channel.enabled).flatMap((channel) => channel.models || []));
 }
 
+function collectKnownModels(settings: AdminSettings) {
+    return uniqueModels([
+        ...(settings.public.modelChannel.availableModels || []),
+        ...(settings.public.modelChannel.modelCosts || []).map((item) => item.model),
+        ...settings.private.channels.flatMap((channel) => channel.models || []),
+    ]);
+}
+
+function buildModelSelectGroups(sourceModels: string[], existingModels: string[]): Record<ModelSelectTabKey, string[]> {
+    const source = uniqueModels(sourceModels);
+    const existing = uniqueModels(existingModels);
+    const existingSet = new Set(existing);
+    return {
+        new: source.filter((model) => !existingSet.has(model)),
+        current: existing,
+    };
+}
+
 function uniqueModels(models: string[]) {
     return Array.from(new Set(models.filter(Boolean)));
+}
+
+function filterModels(models: string[], options: string[]) {
+    const optionSet = new Set(options);
+    return uniqueModels(models).filter((model) => optionSet.has(model));
 }
 
 function modelSummary(models: string[]) {
@@ -680,6 +966,7 @@ async function collectSettings(form: any, editorMode: Record<SettingsTabKey, Edi
         }
         values.private = privateSetting;
     }
+    values.public.modelChannel.availableModels = filterModels(values.public.modelChannel.availableModels, collectChannelModels(values.private.channels));
     return normalizeSettings(values);
 }
 

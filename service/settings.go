@@ -31,6 +31,7 @@ func SaveSettings(settings model.Settings) (model.Settings, error) {
 	}
 	settings = normalizeSettings(settings)
 	keepPrivateAPIKeys(&settings, normalizeSettings(saved))
+	keepPrivateAuthSecrets(&settings, normalizeSettings(saved))
 	result, err := repository.SaveSettings(settings, now())
 	if err == nil {
 		RefreshPromptSyncScheduler()
@@ -64,11 +65,38 @@ func normalizePublicSetting(setting model.PublicSetting) model.PublicSetting {
 	if setting.ModelChannel.AvailableModels == nil {
 		setting.ModelChannel.AvailableModels = []string{}
 	}
+	if setting.ModelChannel.ModelCosts == nil {
+		setting.ModelChannel.ModelCosts = []model.ModelCost{}
+	}
+	for i := range setting.ModelChannel.ModelCosts {
+		setting.ModelChannel.ModelCosts[i].Model = strings.TrimSpace(setting.ModelChannel.ModelCosts[i].Model)
+		if setting.ModelChannel.ModelCosts[i].Credits < 0 {
+			setting.ModelChannel.ModelCosts[i].Credits = 0
+		}
+	}
 	if setting.ModelChannel.AllowCustomChannel == nil {
 		enabled := true
 		setting.ModelChannel.AllowCustomChannel = &enabled
 	}
+	if setting.Auth.AllowRegister == nil {
+		enabled := true
+		setting.Auth.AllowRegister = &enabled
+	}
 	return setting
+}
+
+func ModelCost(modelName string) (int, error) {
+	settings, err := repository.GetSettings()
+	if err != nil {
+		return 0, err
+	}
+	modelName = strings.TrimSpace(modelName)
+	for _, item := range normalizePublicSetting(settings.Public).ModelChannel.ModelCosts {
+		if item.Model == modelName {
+			return item.Credits, nil
+		}
+	}
+	return 0, nil
 }
 
 func normalizePrivateSetting(setting model.PrivateSetting) model.PrivateSetting {
@@ -94,6 +122,7 @@ func hidePrivateAPIKeys(settings model.Settings) model.Settings {
 	for i := range settings.Private.Channels {
 		settings.Private.Channels[i].APIKey = ""
 	}
+	settings.Private.Auth.LinuxDo.ClientSecret = ""
 	return settings
 }
 
@@ -105,6 +134,12 @@ func keepPrivateAPIKeys(settings *model.Settings, saved model.Settings) {
 		if channel, ok := findSavedChannel(settings.Private.Channels[i], saved.Private.Channels, i); ok {
 			settings.Private.Channels[i].APIKey = channel.APIKey
 		}
+	}
+}
+
+func keepPrivateAuthSecrets(settings *model.Settings, saved model.Settings) {
+	if strings.TrimSpace(settings.Private.Auth.LinuxDo.ClientSecret) == "" {
+		settings.Private.Auth.LinuxDo.ClientSecret = saved.Private.Auth.LinuxDo.ClientSecret
 	}
 }
 
