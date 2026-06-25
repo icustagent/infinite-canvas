@@ -16,11 +16,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          cpus: "1.00"
-          memory: 1G
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "1.00"
+    #       memory: 1G
     networks:
       - infinite-canvas
       - apinetwork
@@ -38,11 +38,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 500m
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "0.5"
+    #       memory: 500m
     networks:
       - infinite-canvas
 
